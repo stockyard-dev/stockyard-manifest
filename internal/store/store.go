@@ -14,15 +14,15 @@ import (
 type DB struct{ db *sql.DB }
 
 type Project struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Ecosystem   string `json:"ecosystem,omitempty"` // npm, go, pip, cargo, maven
-	RepoURL     string `json:"repo_url,omitempty"`
-	CreatedAt   string `json:"created_at"`
-	DepCount    int    `json:"dep_count"`
-	VulnCount   int    `json:"vuln_count"`
-	OutdatedCount int  `json:"outdated_count"`
-	LastScan    string `json:"last_scan,omitempty"`
+	ID            string `json:"id"`
+	Name          string `json:"name"`
+	Ecosystem     string `json:"ecosystem,omitempty"` // npm, go, pip, cargo, maven
+	RepoURL       string `json:"repo_url,omitempty"`
+	CreatedAt     string `json:"created_at"`
+	DepCount      int    `json:"dep_count"`
+	VulnCount     int    `json:"vuln_count"`
+	OutdatedCount int    `json:"outdated_count"`
+	LastScan      string `json:"last_scan,omitempty"`
 }
 
 type Dependency struct {
@@ -90,6 +90,7 @@ func Open(dataDir string) (*DB, error) {
 			return nil, fmt.Errorf("migrate: %w", err)
 		}
 	}
+	db.Exec(`CREATE TABLE IF NOT EXISTS extras(resource TEXT NOT NULL,record_id TEXT NOT NULL,data TEXT NOT NULL DEFAULT '{}',PRIMARY KEY(resource, record_id))`)
 	return &DB{db: db}, nil
 }
 
@@ -106,7 +107,8 @@ func (d *DB) hydrateProject(p *Project) {
 }
 
 func (d *DB) CreateProject(p *Project) error {
-	p.ID = genID(); p.CreatedAt = now()
+	p.ID = genID()
+	p.CreatedAt = now()
 	_, err := d.db.Exec(`INSERT INTO projects (id,name,ecosystem,repo_url,created_at) VALUES (?,?,?,?,?)`,
 		p.ID, p.Name, p.Ecosystem, p.RepoURL, p.CreatedAt)
 	return err
@@ -156,17 +158,36 @@ func (d *DB) AddDependency(dep *Dependency) error {
 		dep.ID = genID()
 		dep.CreatedAt = t
 		dep.UpdatedAt = t
-		direct := 1; if !dep.Direct { direct = 0 }
-		outdated := 0; if dep.Outdated { outdated = 1 }
-		deprecated := 0; if dep.Deprecated { deprecated = 1 }
+		direct := 1
+		if !dep.Direct {
+			direct = 0
+		}
+		outdated := 0
+		if dep.Outdated {
+			outdated = 1
+		}
+		deprecated := 0
+		if dep.Deprecated {
+			deprecated = 1
+		}
 		_, err := d.db.Exec(`INSERT INTO dependencies (id,project_id,name,version,latest_version,license,ecosystem,direct,outdated,deprecated,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
 			dep.ID, dep.ProjectID, dep.Name, dep.Version, dep.LatestVersion, dep.License, dep.Ecosystem, direct, outdated, deprecated, dep.CreatedAt, dep.UpdatedAt)
 		return err
 	}
 	dep.ID = existingID
-	outdated := 0; if dep.LatestVersion != "" && dep.Version != dep.LatestVersion { outdated = 1; dep.Outdated = true }
-	deprecated := 0; if dep.Deprecated { deprecated = 1 }
-	direct := 1; if !dep.Direct { direct = 0 }
+	outdated := 0
+	if dep.LatestVersion != "" && dep.Version != dep.LatestVersion {
+		outdated = 1
+		dep.Outdated = true
+	}
+	deprecated := 0
+	if dep.Deprecated {
+		deprecated = 1
+	}
+	direct := 1
+	if !dep.Direct {
+		direct = 0
+	}
 	_, err = d.db.Exec(`UPDATE dependencies SET version=?,latest_version=?,license=?,ecosystem=?,direct=?,outdated=?,deprecated=?,updated_at=? WHERE id=?`,
 		dep.Version, dep.LatestVersion, dep.License, dep.Ecosystem, direct, outdated, deprecated, t, existingID)
 	// Update project last_scan
@@ -189,7 +210,9 @@ func (d *DB) ListDependencies(projectID string) []Dependency {
 		var dep Dependency
 		var direct, outdated, deprecated int
 		rows.Scan(&dep.ID, &dep.ProjectID, &dep.Name, &dep.Version, &dep.LatestVersion, &dep.License, &dep.Ecosystem, &direct, &outdated, &deprecated, &dep.CreatedAt, &dep.UpdatedAt)
-		dep.Direct = direct == 1; dep.Outdated = outdated == 1; dep.Deprecated = deprecated == 1
+		dep.Direct = direct == 1
+		dep.Outdated = outdated == 1
+		dep.Deprecated = deprecated == 1
 		d.hydrateDep(&dep)
 		out = append(out, dep)
 	}
@@ -203,7 +226,9 @@ func (d *DB) GetDependency(id string) *Dependency {
 		&dep.ID, &dep.ProjectID, &dep.Name, &dep.Version, &dep.LatestVersion, &dep.License, &dep.Ecosystem, &direct, &outdated, &deprecated, &dep.CreatedAt, &dep.UpdatedAt); err != nil {
 		return nil
 	}
-	dep.Direct = direct == 1; dep.Outdated = outdated == 1; dep.Deprecated = deprecated == 1
+	dep.Direct = direct == 1
+	dep.Outdated = outdated == 1
+	dep.Deprecated = deprecated == 1
 	d.hydrateDep(&dep)
 	return &dep
 }
@@ -231,8 +256,11 @@ func (d *DB) ImportDependencies(projectID string, deps []Dependency) (int, error
 // ── Vulnerabilities ──
 
 func (d *DB) AddVulnerability(v *Vulnerability) error {
-	v.ID = genID(); v.CreatedAt = now()
-	if v.Severity == "" { v.Severity = "medium" }
+	v.ID = genID()
+	v.CreatedAt = now()
+	if v.Severity == "" {
+		v.Severity = "medium"
+	}
 	_, err := d.db.Exec(`INSERT INTO vulnerabilities (id,dependency_id,cve_id,severity,title,description,fix_version,url,created_at) VALUES (?,?,?,?,?,?,?,?,?)`,
 		v.ID, v.DependencyID, v.CVEID, v.Severity, v.Title, v.Description, v.FixVersion, v.URL, v.CreatedAt)
 	return err
@@ -327,12 +355,12 @@ func (d *DB) ExportSBOM(projectID string) []SBOMEntry {
 // ── Stats ──
 
 type Stats struct {
-	Projects       int            `json:"projects"`
-	Dependencies   int            `json:"dependencies"`
-	Vulnerabilities int           `json:"vulnerabilities"`
-	Outdated       int            `json:"outdated"`
-	BySeverity     map[string]int `json:"by_severity"`
-	Ecosystems     []string       `json:"ecosystems"`
+	Projects        int            `json:"projects"`
+	Dependencies    int            `json:"dependencies"`
+	Vulnerabilities int            `json:"vulnerabilities"`
+	Outdated        int            `json:"outdated"`
+	BySeverity      map[string]int `json:"by_severity"`
+	Ecosystems      []string       `json:"ecosystems"`
 }
 
 func (d *DB) Stats() Stats {
@@ -346,7 +374,8 @@ func (d *DB) Stats() Stats {
 	if rows != nil {
 		defer rows.Close()
 		for rows.Next() {
-			var sev string; var c int
+			var sev string
+			var c int
 			rows.Scan(&sev, &c)
 			s.BySeverity[sev] = c
 		}
@@ -365,4 +394,56 @@ func (d *DB) Stats() Stats {
 	}
 	_ = strings.Join(nil, "") // avoid unused import
 	return s
+}
+
+// ─── Extras: generic key-value storage for personalization custom fields ───
+
+func (d *DB) GetExtras(resource, recordID string) string {
+	var data string
+	err := d.db.QueryRow(
+		`SELECT data FROM extras WHERE resource=? AND record_id=?`,
+		resource, recordID,
+	).Scan(&data)
+	if err != nil || data == "" {
+		return "{}"
+	}
+	return data
+}
+
+func (d *DB) SetExtras(resource, recordID, data string) error {
+	if data == "" {
+		data = "{}"
+	}
+	_, err := d.db.Exec(
+		`INSERT INTO extras(resource, record_id, data) VALUES(?, ?, ?)
+		 ON CONFLICT(resource, record_id) DO UPDATE SET data=excluded.data`,
+		resource, recordID, data,
+	)
+	return err
+}
+
+func (d *DB) DeleteExtras(resource, recordID string) error {
+	_, err := d.db.Exec(
+		`DELETE FROM extras WHERE resource=? AND record_id=?`,
+		resource, recordID,
+	)
+	return err
+}
+
+func (d *DB) AllExtras(resource string) map[string]string {
+	out := make(map[string]string)
+	rows, _ := d.db.Query(
+		`SELECT record_id, data FROM extras WHERE resource=?`,
+		resource,
+	)
+	if rows == nil {
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, data string
+		rows.Scan(&id, &data)
+		out[id] = data
+	}
+	return out
 }
